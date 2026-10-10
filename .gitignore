@@ -1,0 +1,42 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+
+# 日志文件
+*.log
+
+# 大型数据文件
+*.csv
+*.parquet
+*.feather
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.zip
+
+# 数据目录
+data/
+outputs/
+
+config_local.json
