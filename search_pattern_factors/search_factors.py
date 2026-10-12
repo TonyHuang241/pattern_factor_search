@@ -62,10 +62,14 @@ class PatternFactorSearch:
         })
 
     def _prepare_windows(self):
-        """预计算价格窗口的去均值结果和平方和开根号，供全部形态复用。"""
-        prices = np.pad(self.prices.to_numpy(dtype=float), ((self.pattern_length - 1, 0), (0, 0)), constant_values=np.nan)
-        # 维度为（交易日、股票、窗口内时间）；开头不足窗口长度的位置保留 NaN。
-        windows = np.lib.stride_tricks.sliding_window_view(prices, self.pattern_length, axis=0)
+        prices = np.pad(
+            self.prices.to_numpy(dtype=float), 
+            ((self.pattern_length - 1, 0), (0, 0)), 
+            constant_values=np.nan
+        )
+        windows = np.lib.stride_tricks.sliding_window_view(
+            prices, self.pattern_length, axis=0
+        )
         price_centered = windows - windows.mean(axis=-1, keepdims=True)
         price_norm = np.sqrt((price_centered ** 2).sum(axis=-1))
         price_norm[windows.max(axis=-1) == windows.min(axis=-1)] = np.nan
