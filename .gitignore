@@ -38,5 +38,6 @@ Thumbs.db
 # 数据目录
 data/
 outputs/
+output/
 
 config_local.json

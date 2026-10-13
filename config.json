@@ -1,3 +1,5 @@
 {
-    "stock_daily_file": "a_share_market_data/daily_stock_data.parquet"
+    "stock_daily_file": "a_share_market_data/stock_daily/daily_stock_data.parquet",
+    "output_dir": "pattern_factor_search/output/",
+    "n_jobs": 16
 }
