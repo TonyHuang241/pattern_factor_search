@@ -1,4 +1,4 @@
-import os, json
+import os, json, shutil
 
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
@@ -12,9 +12,15 @@ CONFIG_LOCAL_FILE = "config_local.json"
 CONFIG_FILE = "config.json"
 
 def plot_result(result, output_file, title):
-    """绘制每个形态的样本内 IC（横轴）与样本外 IC（纵轴）散点图。"""
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.scatter(result["train_ic"], result["test_ic"], s=16, color="#2a78d6", edgecolors="#fcfcfb", linewidths=0.5)
+    """绘制所有切分日每个形态的样本内 IC（横轴）与样本外 IC（纵轴）散点图，每个切分日一种颜色和点形。"""
+    colors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948", "#0d366b", "#8c5a2b", "#52514e", "#9a9a1a"]
+    markers = ["o", "s", "^", "D"]
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for i, (split_date, group) in enumerate(result.groupby("split_date")):
+        ax.scatter(group["train_ic"], group["test_ic"], s=8, color=colors[i % len(colors)], marker=markers[i % len(markers)], alpha=0.7, linewidths=0, label=split_date)
+    legend = ax.legend(title="split date", loc="upper left", bbox_to_anchor=(1.02, 1), markerscale=2.5, frameon=False)
+    for handle in legend.legend_handles:
+        handle.set_alpha(1)
     ax.axhline(0, color="#52514e", linewidth=0.8)
     ax.axvline(0, color="#52514e", linewidth=0.8)
     ax.grid(color="#e5e4e0", linewidth=0.5)
@@ -26,21 +32,27 @@ if __name__ == "__main__":
     config = json.load(open(CONFIG_FILE, "r"))
     config_local = json.load(open(CONFIG_LOCAL_FILE, "r"))
 
+    shutil.rmtree(config["output_dir"], ignore_errors=True)
+    os.makedirs(config["output_dir"])
+
     config = {k: config_local["root_dir"] + v if k.split('_')[-1] in ["file", "dir"] else v for k, v in config.items()}
 
     stock_daily = pd.read_parquet(config["stock_daily_file"])
-    stock_daily["year"] = stock_daily["date"].str[:4].astype(int)
-    year_start = stock_daily.groupby("year")["trade_day"].min().to_dict()
-    for year in range(2015, 2027):
+    trade_dates = stock_daily.drop_duplicates("trade_day").set_index("trade_day")["date"]
+
+    first_split_date = stock_daily.loc[stock_daily["date"] >= config["start_date"], "trade_day"].min()
+    results = []
+    for split_date in range(first_split_date, stock_daily["trade_day"].max() + 1, config["roll_step_length"]):
         pattern_searcher = PatternFactorSearch(
-            data=stock_daily[stock_daily["year"].isin([year - 1, year])],
-            pattern_length=20,
-            split_date=year_start[year],
-            forward_period=1,
-            n_jobs=config["n_jobs"],
+            data=stock_daily[(stock_daily["trade_day"] >= split_date - config["train_length"]) & (stock_daily["trade_day"] < split_date + config["test_length"])],
+            pattern_length=config["pattern_length"],
+            split_date=split_date,
+            forward_period=5,
         )
-        result = pattern_searcher.search(num_patterns=360)
-        plot_result(result, os.path.join(config["output_dir"], f"pattern_ic_{year}.png"), f"split year {year}")
+        result = pattern_searcher.search(num_patterns=360, desc=f"split date {trade_dates[split_date]}")
+        result["split_date"] = trade_dates[split_date]
+        results.append(result)
+    plot_result(pd.concat(results), os.path.join(config["output_dir"], "pattern_ic.png"), f"split date {config['start_date']} onwards")
 
 
     

@@ -1,5 +1,9 @@
 {
     "stock_daily_file": "a_share_market_data/stock_daily/daily_stock_data.parquet",
     "output_dir": "pattern_factor_search/output/",
-    "n_jobs": 16
+    "train_length": 750,
+    "test_length": 250,
+    "roll_step_length": 250,
+    "pattern_length": 60,
+    "start_date": "20150101"
 }

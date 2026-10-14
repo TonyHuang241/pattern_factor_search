@@ -41,3 +41,5 @@ outputs/
 output/
 
 config_local.json
+# 个人计划文档
+PLAN.md
