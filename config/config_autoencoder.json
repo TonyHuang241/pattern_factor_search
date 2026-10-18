@@ -1,6 +1,7 @@
 {
     "stock_daily_file": "a_share_market_data/stock_daily/daily_stock_data.parquet",
     "model_path": "pattern_factor_search/model/",
+    "output_dir": "pattern_factor_search/output/autoencoder_loss/",
     "start_date": "20100101",
     "end_date": "20151231",
     "split_date": "20140601",
