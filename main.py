@@ -5,6 +5,8 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FormatStrFormatter, MultipleLocator
+import torch
 
 from search_pattern_factors.search_factors import PatternFactorSearch
 
@@ -23,6 +25,9 @@ def plot_result(result, output_file, title):
         handle.set_alpha(1)
     ax.axhline(0, color="#52514e", linewidth=0.8)
     ax.axvline(0, color="#52514e", linewidth=0.8)
+    for axis in (ax.xaxis, ax.yaxis):
+        axis.set_major_locator(MultipleLocator(0.01))
+        axis.set_major_formatter(FormatStrFormatter("%.2f"))
     ax.grid(color="#e5e4e0", linewidth=0.5)
     ax.set(xlabel="train_ic", ylabel="test_ic", title=title)
     fig.savefig(output_file, dpi=150, bbox_inches="tight")
@@ -31,11 +36,10 @@ def plot_result(result, output_file, title):
 if __name__ == "__main__":
     config = json.load(open(CONFIG_FILE, "r"))
     config_local = json.load(open(CONFIG_LOCAL_FILE, "r"))
+    config = {k: config_local["root_dir"] + v if k.split('_')[-1] in ["file", "dir"] else v for k, v in config.items()}
 
     shutil.rmtree(config["output_dir"], ignore_errors=True)
     os.makedirs(config["output_dir"])
-
-    config = {k: config_local["root_dir"] + v if k.split('_')[-1] in ["file", "dir"] else v for k, v in config.items()}
 
     stock_daily = pd.read_parquet(config["stock_daily_file"])
     trade_dates = stock_daily.drop_duplicates("trade_day").set_index("trade_day")["date"]
@@ -50,9 +54,9 @@ if __name__ == "__main__":
             forward_period=5,
         )
         result = pattern_searcher.search(num_patterns=360, desc=f"split date {trade_dates[split_date]}")
+        if torch.cuda.is_available():
+            # search 返回后局部 GPU 张量已释放，清理未使用的显存缓存。
+            torch.cuda.empty_cache()
         result["split_date"] = trade_dates[split_date]
         results.append(result)
     plot_result(pd.concat(results), os.path.join(config["output_dir"], "pattern_ic.png"), f"split date {config['start_date']} onwards")
-
-
-    

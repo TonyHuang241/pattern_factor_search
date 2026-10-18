@@ -6,8 +6,6 @@ import torch
 import torch.nn.functional as F
 
 class PatternFactorSearch:
-    """搜索三点价格形态，并计算样本内外 IC。"""
-
     def __init__(self, data, pattern_length, split_date, forward_period):
         self.pattern_length = pattern_length
         self.forward_period = forward_period
@@ -26,8 +24,9 @@ class PatternFactorSearch:
 
     def search(self, num_patterns, desc="search patterns"):
         """均匀枚举形态，按样本内 IC 降序返回结果。"""
+        print(f"device: {"cuda" if torch.cuda.is_available() else "cpu"}")
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        prices = torch.tensor(self.prices.to_numpy(dtype=float), device=device)
+        prices = torch.tensor(self.prices.to_numpy(dtype=np.float32), device=device)
         forward_returns = self._forward_returns(prices)
         price_windows = self._prepare_windows(prices)
         records = []
@@ -70,7 +69,7 @@ class PatternFactorSearch:
         })
 
     def _generate_pattern(self, angle, device):
-        x = torch.linspace(0, 1, self.pattern_length, dtype=torch.float64, device=device)
+        x = torch.linspace(0, 1, self.pattern_length, dtype=torch.float32, device=device)
         return torch.where(x <= 0.5, np.cos(angle) * (1 - 2 * x), np.sin(angle) * (2 * x - 1))
 
     def _standardize(self, values):

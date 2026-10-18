@@ -39,6 +39,7 @@ Thumbs.db
 data/
 outputs/
 output/
+models/
 
 config_local.json
 # 个人计划文档
