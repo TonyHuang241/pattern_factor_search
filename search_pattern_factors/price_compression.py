@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 
@@ -6,7 +7,6 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, Subset
 
 
 class AutoEncoder(nn.Module):
@@ -26,79 +26,50 @@ class AutoEncoder(nn.Module):
             nn.Linear(64, in_dim),
         )
 
-    def encode(self, x):
-        """将已完成 Min-Max 标准化的窗口压缩为单位长度向量。"""
-        return F.normalize(self.encoder(x), p=2, dim=-1)
-
     def forward(self, x):
-        return self.decoder(self.encode(x))
+        # 对原始价格窗口做 Min-Max 标准化，压缩为单位长度向量后解码还原；同时返回标准化窗口作为重建目标。
+        x = x - x.min(dim=-1, keepdim=True).values
+        x = x / x.max(dim=-1, keepdim=True).values
+        return x, self.decoder(F.normalize(self.encoder(x), p=2, dim=-1))
 
 
-class PriceWindowDataset(Dataset):
-    """仅保存 CPU 价格矩阵和窗口索引，取样时生成标准化窗口。"""
-
-    def __init__(self, data, pattern_length):
-        if pattern_length < 2:
-            raise ValueError("pattern_length 必须至少为 2")
-        self.pattern_length = pattern_length
-        self.first_trade_day = int(data["trade_day"].min())
-        data = data[["code", "trade_day", "close", "is_suspended"]].copy()
-        data["close"] = data["close"].astype(np.float32)
-        data.loc[data["is_suspended"], "close"] = np.nan
-        data = data.pivot(index="code", columns="trade_day", values="close")
-        data = data.reindex(columns=range(self.first_trade_day, int(data.columns.max()) + 1))
-        self.prices = np.ascontiguousarray(data.to_numpy(dtype=np.float32))
-
-        indices = []
-        for stock_index, prices in enumerate(self.prices):
-            # 逐只股票检查窗口；滑动视图不复制底层价格，临时掩码也只覆盖一只股票。
-            windows = np.lib.stride_tricks.sliding_window_view(prices, pattern_length)
-            valid = np.isfinite(windows).all(axis=1)
-            valid &= windows.max(axis=1) > windows.min(axis=1)
-            starts = np.flatnonzero(valid).astype(np.int32)
-            indices.append(np.column_stack((np.full(len(starts), stock_index, dtype=np.int32), starts)))
-        self.indices = np.concatenate(indices)
-
-    def __len__(self):
-        return len(self.indices)
-
-    def __getitem__(self, index):
-        stock_index, start = self.indices[index]
-        window = torch.tensor(self.prices[stock_index, start:start + self.pattern_length])
-        window = window - window.min()
-        return window / window.max()
-
-
-def train_model(data, latent_dim=2, batch_size=1024, pattern_length=60, split_date="20140601", epochs=100, learning_rate=0.001, seed=42):
-    """按窗口结束日期划分样本，训练一个指定维度的模型，返回最终模型和损失记录。"""
-    if epochs < 1:
-        raise ValueError("epochs 必须至少为 1")
-    torch.manual_seed(seed)
+def train_model(data, config):
+    """将收盘价宽表展开为三维滑动窗口，按窗口结束日期划分样本，按 config 中的参数训练并早停，返回验证损失最优的模型和损失记录。"""
+    torch.manual_seed(config["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataset = PriceWindowDataset(data, pattern_length)
-    split_days = data.loc[data["date"] >= split_date, "trade_day"]
-    split_day = int(split_days.min()) if len(split_days) else int(data["trade_day"].max()) + 1
-    end_days = dataset.indices[:, 1] + dataset.first_trade_day + pattern_length - 1
-    train_indices = np.flatnonzero(end_days < split_day)
-    val_indices = np.flatnonzero(end_days >= split_day)
-    if len(train_indices) == 0 or len(val_indices) == 0:
-        raise ValueError("筛选后的训练集或验证集为空，请检查日期范围、窗口长度和停牌记录")
+    split_day = int(data.loc[data["date"] >= config["split_date"], "trade_day"].min())
 
-    # 两个 Subset 共用价格矩阵；不启动额外 worker，避免复制数据集占用内存。
-    train_loader = DataLoader(Subset(dataset, train_indices), batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(Subset(dataset, val_indices), batch_size=batch_size, num_workers=0)
-    model = AutoEncoder(pattern_length, latent_dim).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    # 宽表行为交易日、列为股票；停牌日不进宽表，补齐交易日后即为 NaN。
+    data = data.loc[~data["is_suspended"]]
+    data = data.pivot(index="trade_day", columns="code", values="close")
+
+    # 三维视图 (窗口数, pattern_length, 股票数) 不复制数据；每个窗口剔除期内有缺失或无波动的股票。
+    windows = np.lib.stride_tricks.sliding_window_view(data.to_numpy(dtype=np.float32), config["pattern_length"], axis=0)
+    windows = windows.transpose(0, 2, 1)
+    valid = np.isfinite(windows).all(axis=1) & (windows.max(axis=1) > windows.min(axis=1))
+    window_index, stock_index = np.nonzero(valid)
+    end_days = window_index + int(data.index.min()) + config["pattern_length"] - 1
+
+    # 按 (窗口, 股票) 取出保留的价格序列，复制为 (样本数, pattern_length) 的二维数组；Min-Max 标准化在模型 forward 中完成。
+    windows = windows[window_index, :, stock_index]
+    train_windows = torch.from_numpy(windows[end_days < split_day]).to(device)
+    val_windows = torch.from_numpy(windows[end_days >= split_day]).to(device)
+
+    model = AutoEncoder(config["pattern_length"], config["latent_dim"]).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["learning_rate"])
     history = []
-    print(f"device: {device}, train windows: {len(train_indices)}, validation windows: {len(val_indices)}")
+    best_val_loss = float("inf")
+    best_epoch = 0
+    print(f"device: {device}, train windows: {len(train_windows)}, validation windows: {len(val_windows)}")
 
-    for epoch in range(epochs):
+    for epoch in range(config["epochs"]):
         model.train()
         train_loss = 0.0
-        for windows in train_loader:
-            windows = windows.to(device)
+        for batch in torch.randperm(len(train_windows), device=device).split(config["batch_size"]):
+            windows = train_windows[batch]
             optimizer.zero_grad(set_to_none=True)
-            loss = F.mse_loss(model(windows), windows)
+            windows, reconstruction = model(windows)
+            loss = F.mse_loss(reconstruction, windows)
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * len(windows)
@@ -106,35 +77,37 @@ def train_model(data, latent_dim=2, batch_size=1024, pattern_length=60, split_da
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for windows in val_loader:
-                windows = windows.to(device)
-                val_loss += F.mse_loss(model(windows), windows).item() * len(windows)
+            for windows in val_windows.split(config["batch_size"]):
+                windows, reconstruction = model(windows)
+                val_loss += F.mse_loss(reconstruction, windows).item() * len(windows)
 
-        train_loss /= len(train_indices)
-        val_loss /= len(val_indices)
+        train_loss /= len(train_windows)
+        val_loss /= len(val_windows)
         history.append({"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss})
-        print(f"epoch {epoch + 1}/{epochs}, train MSE: {train_loss:.6f}, validation MSE: {val_loss:.6f}")
+        print(f"epoch {epoch + 1}/{config['epochs']}, train MSE: {train_loss:.6f}, validation MSE: {val_loss:.6f}")
 
+        # 早停：验证损失创新低时保存参数，连续 patience 个 epoch 未创新低则停止训练。
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_epoch = epoch
+            best_state = copy.deepcopy(model.state_dict())
+        elif epoch - best_epoch >= config["patience"]:
+            print(f"early stop at epoch {epoch + 1}, best epoch: {best_epoch + 1}, best validation MSE: {best_val_loss:.6f}")
+            break
+
+    model.load_state_dict(best_state)
     return model.cpu(), pd.DataFrame(history)
 
 
-def main():
-    """正式训练入口；开发和测试时仅用小样本直接调用 train_model。"""
-    with open("config.json") as file:
-        config = json.load(file)
-    with open("config_local.json") as file:
-        config_local = json.load(file)
-
-    pattern_length = 60
-    latent_dim = 2
-    data = pd.read_parquet(os.path.join(config_local["root_dir"], config["stock_daily_file"]), columns=["date", "code", "trade_day", "close", "is_suspended"], filters=[("date", ">=", "20100101"), ("date", "<=", "20151231")])
-    model, history = train_model(data, latent_dim=latent_dim, pattern_length=pattern_length, batch_size=1024, epochs=100)
-    model_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "price_compression")
-    os.makedirs(model_dir, exist_ok=True)
-    model_name = f"autoencoder_len{pattern_length}_dim{latent_dim}"
-    torch.save(model.state_dict(), os.path.join(model_dir, f"{model_name}.pt"))
-    history.to_csv(os.path.join(model_dir, f"{model_name}_loss.csv"), index=False)
-
-
 if __name__ == "__main__":
-    main()
+    # 正式训练入口；开发和测试时仅用小样本直接调用 train_model。
+    config = json.load(open("config/config_autoencoder.json"))
+    config_local = json.load(open("config_local.json"))
+
+    data = pd.read_parquet(os.path.join(config_local["root_dir"], config["stock_daily_file"]), filters=[("date", ">=", config["start_date"]), ("date", "<=", config["end_date"])])
+    model, history = train_model(data, config)
+
+    # 模型参数和损失记录保存在 model_path 下，文件名标明窗口长度和压缩维度。
+    model_path = os.path.join(config_local["root_dir"], config["model_path"], f"autoencoder_len{config['pattern_length']}_dim{config['latent_dim']}")
+    torch.save(model.state_dict(), f"{model_path}.pt")
+    history.to_csv(f"{model_path}_loss.csv", index=False)

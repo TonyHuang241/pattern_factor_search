@@ -11,7 +11,7 @@ import torch
 from search_pattern_factors.search_factors import PatternFactorSearch
 
 CONFIG_LOCAL_FILE = "config_local.json"
-CONFIG_FILE = "config.json"
+CONFIG_FILE = "config/config_pattern_search.json"
 
 def plot_result(result, output_file, title):
     """绘制所有切分日每个形态的样本内 IC（横轴）与样本外 IC（纵轴）散点图，每个切分日一种颜色和点形。"""

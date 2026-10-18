@@ -1,0 +1,14 @@
+{
+    "stock_daily_file": "a_share_market_data/stock_daily/daily_stock_data.parquet",
+    "model_path": "pattern_factor_search/model/",
+    "start_date": "20100101",
+    "end_date": "20151231",
+    "split_date": "20140601",
+    "pattern_length": 60,
+    "latent_dim": 2,
+    "batch_size": 128,
+    "epochs": 100,
+    "learning_rate": 0.001,
+    "patience": 30,
+    "seed": 42
+}
