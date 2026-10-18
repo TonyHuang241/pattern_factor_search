@@ -84,7 +84,9 @@ def train_model(data, config):
         train_loss /= len(train_windows)
         val_loss /= len(val_windows)
         history.append({"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss})
-        print(f"epoch {epoch + 1}/{config['epochs']}, train MSE: {train_loss:.6f}, validation MSE: {val_loss:.6f}")
+
+        if epoch%50 == 49:
+            print(f"epoch {epoch + 1}/{config['epochs']}, train MSE: {train_loss:.6f}, validation MSE: {val_loss:.6f}")
 
         # 早停：验证损失创新低时保存参数，连续 patience 个 epoch 未创新低则停止训练。
         if val_loss < best_val_loss:
@@ -105,9 +107,18 @@ if __name__ == "__main__":
     config_local = json.load(open("config_local.json"))
 
     data = pd.read_parquet(os.path.join(config_local["root_dir"], config["stock_daily_file"]), filters=[("date", ">=", config["start_date"]), ("date", "<=", config["end_date"])])
-    model, history = train_model(data, config)
+    for i, latent_dim in enumerate([2, 4, 8, 16]):
+        for j, pattern_length in enumerate([20, 60, 120, 250]):
+            print(f"[{i * 4 + j + 1}/16] latent_dim={latent_dim}, pattern_length={pattern_length}", flush=True)
+            config["latent_dim"] = latent_dim
+            config["pattern_length"] = pattern_length
+            model, history = train_model(data, config)
 
-    # 模型参数和损失记录保存在 model_path 下，文件名标明窗口长度和压缩维度。
-    model_path = os.path.join(config_local["root_dir"], config["model_path"], f"autoencoder_len{config['pattern_length']}_dim{config['latent_dim']}")
-    torch.save(model.state_dict(), f"{model_path}.pt")
-    history.to_csv(f"{model_path}_loss.csv", index=False)
+            # 模型参数和损失记录保存在 model_path 下，文件名标明窗口长度和压缩维度。
+            model_path = os.path.join(
+                config_local["root_dir"], 
+                config["model_path"], 
+                f"autoencoder_len{config['pattern_length']}_dim{config['latent_dim']}"
+            )
+            torch.save(model.state_dict(), f"{model_path}.pt")
+            history.to_csv(f"{model_path}_loss.csv", index=False)

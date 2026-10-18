@@ -4,11 +4,11 @@
     "start_date": "20100101",
     "end_date": "20151231",
     "split_date": "20140601",
-    "pattern_length": 60,
-    "latent_dim": 2,
-    "batch_size": 128,
-    "epochs": 100,
+    "pattern_length": 250,
+    "latent_dim": 8,
+    "batch_size": 16258,
+    "epochs": 500,
     "learning_rate": 0.001,
-    "patience": 30,
+    "patience": 50,
     "seed": 42
 }
