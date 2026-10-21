@@ -3,7 +3,6 @@
     "output_dir": "pattern_factor_search/output/",
     "train_length": 500,
     "test_length": 500,
-    "roll_step_length": 250,
-    "pattern_length": 60,
-    "start_date": "20130101"
+    "roll_step_length": 500,
+    "start_date": "20200101"
 }
