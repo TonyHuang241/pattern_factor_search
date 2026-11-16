@@ -1,24 +1,26 @@
 # CLAUDE.md
 
-A 股因子研究项目：整理分钟/日线行情，构建高频与中频因子，做单因子和批量因子评估。项目说明、配置字段和输出文件的详细含义见 [README.md](README.md)，本文件只记录写代码时必须遵守的规范。
+A 股随机权重因子搜索项目：用第 1 到第 n 阶 Legendre 多项式生成随机权重（均值为 0、绝对值之和为 1），把过去窗口期内每天的日度股票回报升维成 6 维（回报、绝对值、符号、平方、三次方、过去 `rolling_mean_window` 日滚动平均），各维度在窗口内做 zscore 后分别与权重加权求和，6 个结果取平均得到因子值，再评估因子的 RankIC 和 RankICIR。本文件只记录写代码时必须遵守的规范。
 
 ## 运行方式
 
-在 [main.py](main.py) 中修改 `CONFIG_FILE` 选择任务，然后执行 `python main.py`。本地数据根目录由 `config_local.json` 的 `root_dir` 指定，配置中以 `_dir` / `_path` 结尾的字段会自动拼到该根目录下。
+三个脚本共用 `config/config_pattern_search.json`，在项目根目录下按顺序执行。本地数据根目录由 `config_local.json` 的 `root_dir` 指定，配置中以 `_dir` / `_file` 结尾的字段会拼到该根目录下。
 
-| 任务 | 配置文件 | 入口类 |
+| 步骤 | 脚本 | 输出 |
 | --- | --- | --- |
-| 数据更新 | `config/config_data_update.json` | `DataUpdater` |
-| 因子构建 | `config/config_factor_construction.json` | `HighFreqFactorConstructor` / `MiddleFreqFactorConstructor` |
-| 因子评估 | `config/config_factor_evaluation.json` | `SingleFactorEvaluation` / `MultiFactorEvaluation` |
+| 1. 生成随机权重 | `search_pattern_factors/01_generate_random_weight.py` | `random_weight/random_weight_n8_len60.parquet` |
+| 2. 计算因子值和样本内 RankIC | `search_pattern_factors/02_calculate_factor_value.py` | `factor_value/factor_ic_n8_len60.parquet`、`factor_value/factor_value_n8_len60.parquet` |
+| 3. 样本外评估和出图 | `search_pattern_factors/03_evaluate_factor.py` | `output/factor_evaluation_n8_len60.html` |
 
-Python 环境：自动使用 `~/.venvs/research/` 中的虚拟环境，运行任何 Python 命令时都用 `~/.venvs/research/bin/python`（例如 `~/.venvs/research/bin/python main.py`），不要用系统 Python。
+文件名中的 `n8_len60` 表示 Legendre 多项式个数为 8、窗口长度为 60。配置里的 `num_polynomials` 和 `window_length` 都是 list，第 1 步按两者的笛卡尔积每个组合生成一个权重文件；第 2、3 步自动处理上一步输出文件夹中的所有文件，有几个文件就算几组，窗口长度以各文件自身为准。因子太多，全部因子值不落盘：第 2 步边算因子边算样本内 RankIC，挑选 RankIC 绝对值最大的 `num_top_factors` 个因子，只保存入选因子的具体值。
 
-项目没有测试套件，改动后通过实际运行对应任务来验证。
+Python 环境：自动使用 `~/.venvs/research/` 中的虚拟环境，运行任何 Python 命令时都用 `~/.venvs/research/bin/python`，不要用系统 Python。Windows 本机没有这个环境，改用 `C:/Users/hung/projects/.venv/Scripts/python.exe`。
+
+项目没有测试套件，改动后通过实际运行对应脚本来验证。
 
 ## 代码书写规范
 
-以下四条规范适用于本项目的所有代码改动，优先级高于通用的 Python 风格习惯（例如不需要为了 79 字符行宽而折行）。
+以下六条规范适用于本项目的所有代码改动，优先级高于通用的 Python 风格习惯（例如不需要为了 79 字符行宽而折行）。
 
 ### 1. 一行能写完就不分行，语义上是两步就拆成两行
 
@@ -50,14 +52,7 @@ factor = factor.loc[factor["date"].isin(pending_dates)].merge(stock_pool, on=["c
 - 只改完成需求所必需的行，不顺手重构、重命名、调整格式或改动无关代码。
 - 新功能优先放进已有的类和方法里，沿用已有的命名、配置读取方式和数据流，不另起一套结构。
 - 不为一次性逻辑新建文件、工具模块、基类或辅助函数；确实需要新方法时，加在相关的现有类中。
-- 新增配置项写进对应的 `config/*.json`，并在相关类的 `__init__` 中与其他字段一样读取。
-
-项目中已有的扩展方式，新增内容时直接照做：
-
-- **新增高频因子**：在 [factors/construction/high_freq_factor_calculation/](factors/construction/high_freq_factor_calculation/) 下新建与类名同名的文件，继承 `_BaseHighFreqFactor`，实现 `calculate()`，返回 `code`、`date` 和以 `factor_name` 命名的因子列。
-- **新增中频因子**：在 [factors/construction/middle_freq_factor_calculation/](factors/construction/middle_freq_factor_calculation/) 下同样处理，继承 `_BaseMiddleFreqFactor`，并设置 `lookback_days`；不要修改共享的 `self.daily`。
-- 因子类需带上 `factor_name`、`factor_type`、`calculation_logic` 等类属性，写法参照同目录下的现有因子。
-- 因子文件名即类名，构建器按文件名自动注册，不需要改动构建器代码。
+- 新增配置项写进 `config/config_pattern_search.json`，在脚本中与其他字段一样从 `config` 读取。
 
 ### 3. 用简单函数，少用高级函数
 
@@ -107,8 +102,23 @@ factor_merged = factor_filtered.merge(stock_pool, on=["code", "date"], how="inne
 
 只有当一个值会被多处使用、或者不放进变量就无法表达时，才新建变量。
 
+### 5. 代码简洁可读，注释要短
+
+- 代码兼顾简洁和可读性，优先使用 numpy / pandas 中最常用的函数，不用复杂、冷门的 pandas 高级函数。
+- 注释能一句话说完就只写一句，不重复代码本身已经表达的内容。
+
+### 6. 注意计算效率，充分利用多进程
+
+- 本机有 72 个逻辑线程和 128G 内存，耗时的计算用多进程并行，充分利用计算资源。
+- 大矩阵运算用 numpy 向量化完成，不逐行逐股票循环；同时控制总内存占用，不超过物理内存。
+- Windows 下单个进程池最多 61 个进程，多进程入口必须放在 `if __name__ == "__main__":` 之下。
+
 ## 数据约定
 
 - 日期统一为 `YYYYMMDD` 字符串，股票代码为六位字符串；读 CSV 时用 `dtype={"code": str, "date": str}` 保留前导零。
-- DataFrame 以 `code`、`date` 为主键列，因子文件每个因子一个 parquet，因子值列名与因子类名一致。
+- DataFrame 以 `code`、`date` 为主键列；日线数据的 `close` 已是后复权价，相邻两日之比即真实收益。
+- 因子值在当日收盘后得到，评估用的未来收益从下一日 10 点开盘价算到其后第 `forward_period` 个交易日的 10 点开盘价；10 点价格来自 `stock_10am_file`（未复权），乘日线的 `adj_factor` 得到后复权价。
+- 第 3 步对入选因子分样本内、样本外各算一套指标：IC、RankIC、两者的 t 值，以及等分 `num_groups` 组后各组区间累计收益与组号的 Pearson 相关系数（单调性）。
+- 输出文件名统一带 `n{多项式个数}_len{窗口长度}`；`random_weight_*.parquet` 每行一条权重，`w_0` 对应窗口内最早一天；`factor_ic_*.parquet` 每行一个随机权重的样本内 RankIC 和 RankICIR（列名 `rank_ic`、`rank_icir`）；`factor_value_*.parquet` 每行一个 `code`、`date`，只含入选因子的因子列 `factor_{weight_id}`。
+- 股票池为 `stock_pool_index_code` 指定指数的成分股（默认中小300），每个交易日取不晚于当日的最近一期成分股；RankIC 和分层都只在股票池内计算，`factor_value_*.parquet` 只含当日在股票池内的股票。
 - 注释和 docstring 使用中文，写法与周围代码保持一致。
